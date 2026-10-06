@@ -97,15 +97,17 @@ def load_state():
     st = fresh_state()
     if not url:
         return st
+    stored_version = STATE_VERSION  # default: nothing stored yet -> fresh $1M
     try:
         r = requests.get(url, timeout=15)
         if r.status_code == 200:
             data = r.json()
             if isinstance(data, dict):
+                stored_version = data.get("version", 1)
                 st.update(data)
     except Exception:
         pass
-    if st.get("version", 1) < STATE_VERSION:
+    if stored_version < STATE_VERSION:
         # One-time migration: $1,000,000 paper account. Keeps the user's
         # strategy, watchlist and risk settings; clears money/positions.
         keep = {k: st.get(k) for k in
