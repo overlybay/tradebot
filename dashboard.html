@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>TradeBot</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#2d333b; --txt:#e6edf3;
+          --muted:#8b949e; --green:#3fb950; --red:#f85149; --amber:#d29922; --blue:#58a6ff; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         padding-bottom:76px; }
+  header { position:sticky; top:0; background:var(--bg); padding:14px 16px 10px;
+           border-bottom:1px solid var(--border); z-index:5; }
+  header h1 { margin:0; font-size:20px; }
+  .modebanner { margin:10px 16px 0; padding:10px 14px; border-radius:10px;
+                font-weight:700; text-align:center; font-size:15px; }
+  .modebanner.paper { background:#1a3a24; color:var(--green); border:1px solid var(--green); }
+  .modebanner.live { background:#3a1a1a; color:var(--red); border:1px solid var(--red); }
+  .tab { display:none; padding:14px 16px; }
+  .tab.active { display:block; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
+          padding:14px; margin-bottom:12px; }
+  .big { font-size:28px; font-weight:800; margin:2px 0; }
+  .lbl { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+  .row { display:flex; justify-content:space-between; padding:6px 0;
+         border-bottom:1px solid var(--border); font-size:14px; }
+  .row:last-child { border-bottom:none; }
+  .pos { color:var(--green); } .neg { color:var(--red); } .muted { color:var(--muted); }
+  button { font-size:16px; border:none; border-radius:10px; padding:14px; width:100%;
+           font-weight:700; cursor:pointer; margin-top:8px; }
+  .btn-green { background:var(--green); color:#04140a; }
+  .btn-red { background:var(--red); color:#fff; }
+  .btn-blue { background:var(--blue); color:#04121f; }
+  .btn-gray { background:var(--border); color:var(--txt); }
+  select, input[type=text], input[type=password], input[type=number] {
+    width:100%; padding:12px; margin:6px 0; border-radius:10px; font-size:16px;
+    background:var(--bg); color:var(--txt); border:1px solid var(--border); }
+  label { font-size:13px; color:var(--muted); display:block; margin-top:10px; }
+  nav { position:fixed; bottom:0; left:0; right:0; background:var(--card);
+        border-top:1px solid var(--border); display:flex; z-index:10; }
+  nav button { flex:1; background:none; color:var(--muted); border-radius:0;
+               padding:10px 0 14px; font-size:11px; margin:0; font-weight:600; }
+  nav button.active { color:var(--blue); }
+  nav button .ico { font-size:22px; display:block; }
+  .warn { background:#3a2a1a; border:1px solid var(--amber); color:#f0b866;
+          padding:12px; border-radius:10px; font-size:14px; margin-bottom:12px; }
+  .trade { font-size:13px; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700; }
+  .pill.buy { background:#1a3a24; color:var(--green); }
+  .pill.sell { background:#3a1a1a; color:var(--red); }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+  .dot.on { background:var(--green); } .dot.off { background:var(--muted); }
+  .honest { font-size:12px; color:var(--muted); margin-top:14px; line-height:1.5; }
+</style>
+</head>
+<body>
+<header><h1>&#129302; TradeBot</h1></header>
+<div id="modebanner" class="modebanner paper">PAPER MODE</div>
+
+<div id="tab-portfolio" class="tab active">
+  <div class="card">
+    <div class="lbl">Account value</div>
+    <div class="big" id="equity">--</div>
+    <div class="row"><span class="muted">Cash</span><span id="cash">--</span></div>
+    <div class="row"><span class="muted">Today's P&amp;L</span><span id="daily">--</span></div>
+    <div class="row"><span class="muted">Win rate (closed trades)</span><span id="winrate">--</span></div>
+    <div class="row"><span class="muted">Market</span><span id="market">--</span></div>
+  </div>
+  <div class="lbl" style="margin:4px 0 8px">Positions</div>
+  <div id="positions"></div>
+</div>
+
+<div id="tab-bot" class="tab">
+  <div class="card">
+    <div class="row"><span class="muted">Status</span><span id="botstatus"><span class="dot off"></span>Stopped</span></div>
+    <div class="row"><span class="muted">Broker</span><span id="broker">--</span></div>
+    <div class="row"><span class="muted">Strategy</span><span id="strat">--</span></div>
+    <div class="row"><span class="muted">Last check</span><span id="lastcycle">--</span></div>
+  </div>
+  <div id="killbox"></div>
+  <button class="btn-green" id="startbtn" onclick="botAction('start')">&#9654; Start bot</button>
+  <button class="btn-red" id="stopbtn" onclick="botAction('stop')">&#9632; Stop bot</button>
+  <div class="card" style="margin-top:12px">
+    <div class="lbl">Strategy</div>
+    <select id="stratpick"></select>
+    <button class="btn-blue" onclick="saveStrategy()">Use this strategy</button>
+  </div>
+  <div class="card">
+    <div class="lbl">Trading mode</div>
+    <button class="btn-gray" onclick="setMode('paper')">Paper (practice, fake money)</button>
+    <button class="btn-red" onclick="goLive()">Go LIVE (real money)</button>
+  </div>
+  <div class="honest">Paper mode uses fake money and delayed free data. A winning
+  paper run does NOT mean live trading will profit. Never trade money you can't afford to lose.</div>
+</div>
+
+<div id="tab-history" class="tab">
+  <div id="trades"></div>
+  <div class="lbl" style="margin:12px 0 6px">Bot log</div>
+  <div id="logs"></div>
+</div>
+
+<div id="tab-settings" class="tab">
+  <div class="card">
+    <div class="lbl">Alpaca API keys (optional)</div>
+    <p class="muted" style="font-size:13px">Free at alpaca.markets. Paper keys work
+    for practice with live data. Keys are stored only on your PC, never shown again.</p>
+    <label>API key</label>
+    <input type="text" id="akey" placeholder="PK..." autocomplete="off">
+    <label>Secret key</label>
+    <input type="password" id="asecret" placeholder="..." autocomplete="off">
+    <button class="btn-blue" onclick="saveKeys()">Save keys</button>
+    <div class="row" style="margin-top:8px"><span class="muted">Keys saved</span><span id="keysset">--</span></div>
+  </div>
+  <div class="card">
+    <div class="lbl">Watchlist (comma separated)</div>
+    <input type="text" id="symbols" placeholder="AAPL, TSLA, BTC/USD">
+    <div class="lbl">Risk limits</div>
+    <label>Max % of account per position</label><input type="number" id="r_pos" step="0.5">
+    <label>Stop-loss % per trade</label><input type="number" id="r_sl" step="0.5">
+    <label>Daily max loss % (kill switch)</label><input type="number" id="r_day" step="0.5">
+    <label>Max open positions</label><input type="number" id="r_max" step="1">
+    <label>Check every (seconds, min 30)</label><input type="number" id="cycle" step="30">
+    <button class="btn-blue" onclick="saveRisk()">Save settings</button>
+  </div>
+</div>
+
+<nav>
+  <button class="active" onclick="showTab('portfolio',this)"><span class="ico">&#128200;</span>Portfolio</button>
+  <button onclick="showTab('bot',this)"><span class="ico">&#129302;</span>Bot</button>
+  <button onclick="showTab('history',this)"><span class="ico">&#128221;</span>History</button>
+  <button onclick="showTab('settings',this)"><span class="ico">&#9881;</span>Settings</button>
+</nav>
+
+<script>
+function showTab(name, el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  if(name==='history') loadHistory();
+  if(name==='settings') loadSettings();
+}
+const fmt$ = v => v==null||isNaN(v) ? '--' : '$'+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const cls = v => v==null ? 'muted' : (v>=0?'pos':'neg');
+
+async function refresh(){
+  try{
+    const s = await (await fetch('/api/status')).json();
+    const b = document.getElementById('modebanner');
+    b.textContent = s.mode==='live' ? 'LIVE MODE - REAL MONEY' : 'PAPER MODE';
+    b.className = 'modebanner ' + s.mode;
+    document.getElementById('equity').textContent = fmt$(s.equity);
+    document.getElementById('equity').className = 'big ' + cls(s.daily_pnl);
+    document.getElementById('cash').textContent = fmt$(s.cash);
+    const d = document.getElementById('daily');
+    d.textContent = (s.daily_pnl>=0?'+':'') + fmt$(s.daily_pnl);
+    d.className = cls(s.daily_pnl);
+    document.getElementById('winrate').textContent = s.win_rate==null ? '--' : s.win_rate.toFixed(1)+'% ('+s.wins+'W/'+s.losses+'L)';
+    document.getElementById('market').textContent = s.market_open ? 'Open (stocks trading)' : 'Closed (crypto only)';
+    document.getElementById('botstatus').innerHTML = s.running
+      ? '<span class="dot on"></span>Running' : '<span class="dot off"></span>Stopped';
+    document.getElementById('broker').textContent = s.broker || '--';
+    document.getElementById('strat').textContent = s.strategy_label || '--';
+    document.getElementById('lastcycle').textContent = s.last_cycle || 'never';
+    document.getElementById('killbox').innerHTML = s.kill_switch
+      ? '<div class="warn">Kill switch ON for today:<br>'+s.kill_reason+'</div>' : '';
+    if(s.last_error) document.getElementById('killbox').innerHTML +=
+      '<div class="warn">Last error: '+s.last_error+'</div>';
+    // positions
+    const p = await (await fetch('/api/positions')).json();
+    const box = document.getElementById('positions');
+    if(p.error){ box.innerHTML = '<div class="card muted">'+p.error+'</div>'; }
+    else if(!p.length){ box.innerHTML = '<div class="card muted">No open positions.</div>'; }
+    else box.innerHTML = p.map(x=>
+      '<div class="card"><div class="row"><strong>'+x.symbol+'</strong><span>'+x.qty.toFixed(4)+' shares</span></div>'+
+      '<div class="row"><span class="muted">Avg price</span><span>'+fmt$(x.avg_price)+'</span></div>'+
+      '<div class="row"><span class="muted">Now</span><span>'+fmt$(x.price)+'</span></div>'+
+      '<div class="row"><span class="muted">P&amp;L</span><span class="'+cls(x.pnl)+'">'+(x.pnl==null?'--':(x.pnl>=0?'+':'')+fmt$(x.pnl)+' ('+x.pnl_pct.toFixed(2)+'%)')+'</span></div></div>'
+    ).join('');
+  }catch(e){ /* offline, keep old values */ }
+}
+async function botAction(a){
+  await fetch('/api/bot/'+a, {method:'POST'});
+  refresh();
+}
+async function setMode(m){
+  const r = await fetch('/api/mode', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({mode:m})});
+  const j = await r.json();
+  if(j.error) alert(j.error); else refresh();
+}
+async function goLive(){
+  if(!confirm('LIVE TRADING CAN LOSE REAL MONEY.\n\nThe bot follows simple rules. It cannot predict the market. Start small - only money you can afford to lose.\n\nSwitch to LIVE?')) return;
+  if(!confirm('Final check: real orders, real dollars. Continue?')) return;
+  const r = await fetch('/api/mode', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({mode:'live', confirm:true})});
+  const j = await r.json();
+  if(j.error) alert(j.error); else { alert('LIVE mode on. Be careful.'); refresh(); }
+}
+async function saveStrategy(){
+  const v = document.getElementById('stratpick').value;
+  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({strategy:v})});
+  alert('Strategy set.'); refresh();
+}
+async function saveKeys(){
+  const k = document.getElementById('akey').value, s = document.getElementById('asecret').value;
+  if(!k || !s){ alert('Enter both key and secret.'); return; }
+  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({alpaca_key:k, alpaca_secret:s})});
+  document.getElementById('akey').value=''; document.getElementById('asecret').value='';
+  alert('Keys saved on your PC.'); loadSettings(); refresh();
+}
+async function saveRisk(){
+  const body = { symbols: document.getElementById('symbols').value.split(','),
+    risk: { max_position_pct: +document.getElementById('r_pos').value,
+            stop_loss_pct: +document.getElementById('r_sl').value,
+            daily_max_loss_pct: +document.getElementById('r_day').value,
+            max_positions: +document.getElementById('r_max').value },
+    cycle_seconds: +document.getElementById('cycle').value };
+  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)});
+  alert('Settings saved.');
+}
+async function loadSettings(){
+  const s = await (await fetch('/api/settings')).json();
+  document.getElementById('keysset').textContent = s.keys_set ? 'Yes' : 'No';
+  document.getElementById('symbols').value = s.symbols.join(', ');
+  document.getElementById('r_pos').value = s.risk.max_position_pct;
+  document.getElementById('r_sl').value = s.risk.stop_loss_pct;
+  document.getElementById('r_day').value = s.risk.daily_max_loss_pct;
+  document.getElementById('r_max').value = s.risk.max_positions;
+  document.getElementById('cycle').value = s.cycle_seconds;
+  const sp = document.getElementById('stratpick');
+  sp.innerHTML = Object.entries(s.strategies).map(([k,v])=>
+    '<option value="'+k+'"'+(k===s.strategy?' selected':'')+'>'+v+'</option>').join('');
+}
+async function loadHistory(){
+  const t = await (await fetch('/api/trades?limit=100')).json();
+  document.getElementById('trades').innerHTML = t.length ? t.map(x=>
+    '<div class="card trade"><div class="row"><span><span class="pill '+x.side.toLowerCase()+'">'+x.side+'</span> <strong>'+x.symbol+'</strong></span>'+
+    '<span class="muted">'+x.ts.replace('T',' ').slice(0,16)+'</span></div>'+
+    '<div class="row"><span class="muted">'+Number(x.qty).toFixed(4)+' @ '+fmt$(x.price)+'</span>'+
+    '<span class="'+cls(x.pnl)+'">'+(x.pnl==null?'':(x.pnl>=0?'+':'')+fmt$(x.pnl))+'</span></div>'+
+    '<div class="muted" style="font-size:12px">'+(x.reason||'')+'</div></div>').join('')
+    : '<div class="card muted">No trades yet.</div>';
+  const l = await (await fetch('/api/logs?limit=60')).json();
+  document.getElementById('logs').innerHTML = l.map(x=>
+    '<div class="trade" style="padding:4px 0;border-bottom:1px solid var(--border)">'+
+    '<span class="muted">'+x.ts.replace('T',' ').slice(5,16)+'</span> ['+x.level+'] '+x.msg+'</div>').join('');
+}
+refresh(); loadSettings(); setInterval(refresh, 10000);
+</script>
+</body>
+</html>

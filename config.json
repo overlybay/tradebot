@@ -1,0 +1,20 @@
+{
+  "mode": "live",
+  "strategy": "ma_cross",
+  "symbols": [
+    "AAPL",
+    "TSLA",
+    "NVDA",
+    "SPY",
+    "BTC/USD",
+    "ETH/USD"
+  ],
+  "risk": {
+    "max_position_pct": 5.0,
+    "stop_loss_pct": 3.0,
+    "daily_max_loss_pct": 2.0,
+    "max_positions": 3
+  },
+  "starting_cash": 10000.0,
+  "cycle_seconds": 120
+}
