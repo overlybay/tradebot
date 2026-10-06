@@ -1,6 +1,6 @@
 # TradeBot — Vercel (paper-only) edition
 
-Live demo: **TBD after deploy** (paper trading only — fake money).
+Live demo: **https://tradebot-paper.vercel.app** (paper trading only — fake money).
 
 This is the hosted, paper-only adaptation of TradeBot. It runs on Vercel's free
 (Hobby) plan:
