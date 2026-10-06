@@ -852,8 +852,9 @@ def positions_payload(st):
         tradeable = list(dict.fromkeys(
             st.get("symbols", []) + [p["symbol"] for p in broker.get_positions()]))
         try:
-            bars_map = bars_yfinance_batch([s for s in tradeable
-                                            if is_crypto(s) or market_open_now()], 5)
+            # 1d/5m returns the last session even when the market is closed,
+            # so positions always show a price.
+            bars_map = bars_yfinance_batch(tradeable, 5)
             broker.set_bars(bars_map)
         except Exception:
             pass
