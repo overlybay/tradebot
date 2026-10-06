@@ -217,6 +217,7 @@ def api_watchlist():
         wl.remove(symbol)
     st["watchlist"] = wl
     save_state(st)
+    _market_cache.clear()
     return jsonify({"ok": True, "watchlist": wl})
 
 
