@@ -64,14 +64,32 @@ def fresh_state():
 
 
 # ---------------------------------------------------------------- blob state
-def _blob_cfg():
-    url = os.environ.get("TRADEBOT_STATE_URL", "")
-    token = os.environ.get("BLOB_READ_WRITE_TOKEN", "")
-    return url, token
+# State persists as a single JSON blob because serverless functions have no
+# disk. Writes go through Vercel's Blob API; reads use the public blob URL.
+BLOB_API = "https://vercel.com/api/blob?pathname=tradebot-state.json"
+BLOB_PATHNAME = "tradebot-state.json"
+
+
+def _blob_token():
+    return os.environ.get("BLOB_READ_WRITE_TOKEN", "")
+
+
+def _store_id(token):
+    # token format: vercel_blob_rw_<storeId>_<secret>
+    parts = (token or "").split("_")
+    return parts[3] if len(parts) >= 5 else ""
+
+
+def _public_url(token):
+    sid = _store_id(token)
+    if not sid:
+        return ""
+    return f"https://{sid.lower()}.public.blob.vercel-storage.com/{BLOB_PATHNAME}"
 
 
 def load_state():
-    url, token = _blob_cfg()
+    token = _blob_token()
+    url = os.environ.get("TRADEBOT_STATE_URL", "") or _public_url(token)
     st = fresh_state()
     if not url:
         return st
@@ -79,28 +97,33 @@ def load_state():
         r = requests.get(url, timeout=15)
         if r.status_code == 200:
             data = r.json()
-            st.update(data)
+            if isinstance(data, dict):
+                st.update(data)
     except Exception:
         pass
     return st
 
 
 def save_state(st):
-    url, token = _blob_cfg()
-    if not url or not token:
+    token = _blob_token()
+    sid = _store_id(token)
+    if not token or not sid:
         return False
     try:
         r = requests.put(
-            url,
+            BLOB_API,
             data=json_dumps(st),
             headers={
                 "Authorization": f"Bearer {token}",
+                "x-api-version": "12",
+                "x-vercel-blob-store-id": sid,
+                "x-add-random-suffix": "0",
+                "x-allow-overwrite": "1",
                 "Content-Type": "application/json",
-                "x-vercel-blob-access": "public",
             },
-            timeout=20,
+            timeout=25,
         )
-        return r.status_code in (200, 201)
+        return r.status_code == 200
     except Exception:
         return False
 
