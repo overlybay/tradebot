@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>TradeBot (Paper)</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root { --bg:#0d1117; --card:#161b22; --border:#2d333b; --txt:#e6edf3;
           --muted:#8b949e; --green:#3fb950; --red:#f85149; --amber:#d29922; --blue:#58a6ff; }
@@ -52,6 +53,12 @@
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
   .dot.on { background:var(--green); } .dot.off { background:var(--muted); }
   .honest { font-size:12px; color:var(--muted); margin-top:14px; line-height:1.5; }
+  .star { font-size:22px; cursor:pointer; color:var(--muted); padding:4px 8px 4px 2px; user-select:none; }
+  .star.on { color:var(--amber); }
+  .stockrow { display:flex; align-items:center; gap:10px; }
+  .chartbtn { width:auto; padding:8px 14px; margin:0 4px 0 0; font-size:14px; }
+  .chartbtn.sel { background:var(--blue); color:#04121f; }
+  #d_chart_wrap { height:230px; position:relative; }
 </style>
 </head>
 <body>
@@ -69,6 +76,30 @@
   </div>
   <div class="lbl" style="margin:4px 0 8px">Positions</div>
   <div id="positions"></div>
+</div>
+
+<div id="tab-stocks" class="tab">
+  <div id="stocklist"></div>
+  <div id="stockdetail" style="display:none">
+    <button class="btn-gray" onclick="closeDetail()">&larr; Back to watchlist</button>
+    <div class="card" style="margin-top:12px">
+      <div class="row"><strong id="d_sym" style="font-size:20px">--</strong><span id="d_chg" class="muted"></span></div>
+      <div class="big" id="d_price">--</div>
+      <div id="d_pos" class="muted" style="font-size:13px;margin-bottom:8px"></div>
+      <div id="d_chart_wrap"><canvas id="d_chart"></canvas></div>
+      <div style="margin:10px 0">
+        <button class="btn-gray chartbtn sel" id="rng1d" onclick="setRange('1d')">1D</button>
+        <button class="btn-gray chartbtn" id="rng5d" onclick="setRange('5d')">5D</button>
+      </div>
+      <label>Amount (USD)</label>
+      <input type="number" id="d_amt" value="1000" min="1" step="10">
+      <div style="display:flex;gap:8px">
+        <button class="btn-green" style="flex:1" onclick="placeOrder('buy')">Buy</button>
+        <button class="btn-red" style="flex:1" onclick="placeOrder('sell')">Sell</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">Simulated market order, fake money. Risk limits still apply.</div>
+    </div>
+  </div>
 </div>
 
 <div id="tab-bot" class="tab">
@@ -124,6 +155,7 @@
 
 <nav>
   <button class="active" onclick="showTab('portfolio',this)"><span class="ico">&#128200;</span>Portfolio</button>
+  <button onclick="showTab('stocks',this)"><span class="ico">&#128200;</span>Stocks</button>
   <button onclick="showTab('bot',this)"><span class="ico">&#129302;</span>Bot</button>
   <button onclick="showTab('history',this)"><span class="ico">&#128221;</span>History</button>
   <button onclick="showTab('settings',this)"><span class="ico">&#9881;</span>Settings</button>
@@ -137,10 +169,98 @@ function showTab(name, el){
   el.classList.add('active');
   if(name==='history') loadHistory();
   if(name==='settings') loadSettings();
+  if(name==='stocks') loadStocks();
 }
 const fmt$ = v => v==null||isNaN(v) ? '--' : '$'+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const cls = v => v==null ? 'muted' : (v>=0?'pos':'neg');
 
+const fmtS = v => v==null||isNaN(v) ? '--' : (v<0?'-':'+')+'$'+Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+async function loadStocks(){
+  try{
+    const m = await (await fetch('/api/market')).json();
+    const p = await (await fetch('/api/positions')).json();
+    const posmap = {};
+    (Array.isArray(p)?p:[]).forEach(x=>{posmap[x.symbol]=x;});
+    const box = document.getElementById('stocklist');
+    if(!Array.isArray(m) || !m.length){ box.innerHTML='<div class="card muted">No market data right now.</div>'; return; }
+    box.innerHTML = m.map(q=>{
+      const up = (q.change||0) >= 0;
+      const hp = posmap[q.symbol];
+      return '<div class="card" style="padding:10px 12px;cursor:pointer" onclick="openDetail(\''+q.symbol+'\')">'+
+        '<div class="stockrow">'+
+        '<span class="star'+(q.starred?' on':'')+'" onclick="event.stopPropagation();toggleStar(\''+q.symbol+'\','+(!q.starred)+')">'+(q.starred?'&#9733;':'&#9734;')+'</span>'+
+        '<div style="flex:1;min-width:0"><strong>'+q.symbol+'</strong>'+
+        (hp?'<div class="muted" style="font-size:11px">holding '+hp.qty.toFixed(4)+'</div>':'')+'</div>'+
+        '<div style="text-align:right;min-width:88px"><div><strong>'+(q.price==null?'--':fmt$(q.price))+'</strong></div>'+
+        '<div class="'+(up?'pos':'neg')+'" style="font-size:12px">'+(q.price==null?'':(up?'+':'')+q.change_pct.toFixed(2)+'%')+'</div></div>'+
+        '</div></div>';
+    }).join('');
+  }catch(e){ /* offline */ }
+}
+async function toggleStar(sym, starred){
+  await fetch('/api/watchlist',{method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({symbol:sym, starred:starred})});
+  loadStocks();
+}
+let detailSym=null, detailRange='1d', detailChart=null;
+async function openDetail(sym){
+  detailSym=sym; detailRange='1d';
+  document.getElementById('rng1d').classList.add('sel');
+  document.getElementById('rng5d').classList.remove('sel');
+  document.getElementById('stocklist').style.display='none';
+  document.getElementById('stockdetail').style.display='block';
+  await renderDetail();
+}
+function closeDetail(){
+  document.getElementById('stockdetail').style.display='none';
+  document.getElementById('stocklist').style.display='block';
+  detailSym=null; if(detailChart){detailChart.destroy(); detailChart=null;}
+}
+async function setRange(r){
+  detailRange=r;
+  document.getElementById('rng1d').classList.toggle('sel', r==='1d');
+  document.getElementById('rng5d').classList.toggle('sel', r==='5d');
+  await renderDetail();
+}
+async function renderDetail(){
+  if(!detailSym) return;
+  const c = await (await fetch('/api/chart?symbol='+encodeURIComponent(detailSym)+'&range='+detailRange)).json();
+  if(c.error){ alert(c.error); return; }
+  document.getElementById('d_sym').textContent = c.symbol;
+  document.getElementById('d_price').textContent = fmt$(c.price);
+  const up = c.change>=0, dc = document.getElementById('d_chg');
+  dc.textContent = fmtS(c.change)+' ('+(up?'+':'')+c.change_pct.toFixed(2)+'%)';
+  dc.className = up?'pos':'neg';
+  try{
+    const pos = await (await fetch('/api/positions')).json();
+    const p = (Array.isArray(pos)?pos:[]).find(x=>x.symbol===detailSym);
+    document.getElementById('d_pos').textContent = p
+      ? 'Holding '+p.qty.toFixed(4)+' @ '+fmt$(p.avg_price)+' — P&L '+(p.pnl==null?'--':fmtS(p.pnl))
+      : 'No position in '+detailSym;
+  }catch(e){}
+  try{
+    const ctx = document.getElementById('d_chart').getContext('2d');
+    if(detailChart) detailChart.destroy();
+    const col = up ? '#3fb950' : '#f85149';
+    detailChart = new Chart(ctx, {type:'line',
+      data:{labels:c.bars.map(b=>b.t.slice(5)), datasets:[{data:c.bars.map(b=>b.c),
+        borderColor:col, borderWidth:2, pointRadius:0, tension:.2, fill:true,
+        backgroundColor: up?'rgba(63,185,80,.12)':'rgba(248,81,73,.12)'}]},
+      options:{responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}, tooltip:{callbacks:{label:(x)=>' $'+x.parsed.y.toLocaleString()}}},
+        scales:{x:{display:false}, y:{ticks:{color:'#8b949e',font:{size:10}}, grid:{color:'#2d333b'}}}}});
+  }catch(e){ /* chart lib offline */ }
+}
+async function placeOrder(side){
+  const amt = parseFloat(document.getElementById('d_amt').value);
+  if(!amt || amt < 1){ alert('Enter an amount of at least $1.'); return; }
+  const r = await fetch('/api/order',{method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({symbol:detailSym, side:side, notional_usd:amt})});
+  const j = await r.json();
+  if(j.error){ alert(j.error); return; }
+  alert(side.toUpperCase()+' '+j.qty.toFixed(4)+' '+j.symbol+' @ '+fmt$(j.price)+(j.pnl!=null?'  P&L '+fmtS(j.pnl):''));
+  renderDetail(); refresh();
+}
 async function refresh(){
   try{
     const s = await (await fetch('/api/status')).json();
@@ -222,6 +342,7 @@ async function loadHistory(){
     '<span class="muted">'+x.ts.replace('T',' ').slice(5,16)+'</span> ['+x.level+'] '+x.msg+'</div>').join('');
 }
 refresh(); loadSettings(); setInterval(refresh, 15000);
+setInterval(()=>{ if(document.getElementById('tab-stocks').classList.contains('active') && !detailSym) loadStocks(); }, 30000);
 </script>
 </body>
 </html>

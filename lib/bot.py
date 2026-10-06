@@ -25,8 +25,10 @@ DEFAULTS = {
         "daily_max_loss_pct": 2.0,
         "max_positions": 3,
     },
-    "starting_cash": 10000.0,
+    "starting_cash": 1000000.0,
 }
+
+STATE_VERSION = 2
 
 STRATEGY_LABELS = {
     "ma_cross": "Trend follow (MA 20/50 cross)",
@@ -60,6 +62,8 @@ def fresh_state():
         "strategy": DEFAULTS["strategy"],
         "symbols": list(DEFAULTS["symbols"]),
         "risk": copy.deepcopy(DEFAULTS["risk"]),
+        "watchlist": [],
+        "version": STATE_VERSION,
     }
 
 
@@ -101,6 +105,21 @@ def load_state():
                 st.update(data)
     except Exception:
         pass
+    if st.get("version", 1) < STATE_VERSION:
+        # One-time migration: $1,000,000 paper account. Keeps the user's
+        # strategy, watchlist and risk settings; clears money/positions.
+        keep = {k: st.get(k) for k in
+                ("strategy", "symbols", "risk", "running", "logs", "watchlist")}
+        migrated = fresh_state()
+        for k, v in keep.items():
+            if v is not None:
+                migrated[k] = v
+        st = migrated
+        add_log(st, "INFO", "Migrated paper account to $1,000,000 starting cash.")
+        try:
+            save_state(st)
+        except Exception:
+            pass
     return st
 
 
@@ -440,6 +459,211 @@ def risk_allows_buy(broker, symbol, equity, positions, risk):
     if notional < 1:
         return False, "position size under $1"
     return True, "ok"
+
+
+def risk_allows_manual_buy(broker, symbol, notional, equity, positions, risk):
+    """Risk gate for user-tapped Buy buttons (paper only)."""
+    held = [p for p in positions if p["symbol"] == symbol]
+    others = [p for p in positions if p["symbol"] != symbol]
+    if not held and len(others) >= risk["max_positions"]:
+        return False, f"already holding max {risk['max_positions']} positions"
+    max_notional = equity * risk["max_position_pct"] / 100.0
+    if notional > max_notional:
+        return False, (f"${notional:,.2f} exceeds max position size "
+                       f"${max_notional:,.2f} ({risk['max_position_pct']}% of equity)")
+    try:
+        cash = broker.get_cash()
+    except Exception:
+        cash = 0
+    if notional > cash:
+        return False, f"${notional:,.2f} exceeds cash ${cash:,.2f}"
+    if notional < 1:
+        return False, "minimum order is $1"
+    return True, "ok"
+
+
+def _flat_close(df):
+    import pandas as pd
+    c = df["Close"]
+    if isinstance(c, pd.DataFrame):
+        c = c.iloc[:, 0]
+    return c
+
+
+def quote_yf(symbol):
+    """Return (price, prev_close) for one symbol via yfinance. None-safe."""
+    import yfinance as yf
+    yfs = symbol.replace("/", "-")
+    try:
+        df = yf.download(yfs, period="5d", interval="1d",
+                         progress=False, auto_adjust=False)
+        if df is None or len(df) == 0:
+            return None, None
+        closes = [float(c) for c in _flat_close(df).dropna()]
+        if not closes:
+            return None, None
+        return closes[-1], (closes[-2] if len(closes) > 1 else closes[0])
+    except Exception:
+        return None, None
+
+
+def quotes_payload(symbols):
+    """Batched quotes: [{symbol, price, change, change_pct}]. One yfinance call."""
+    import yfinance as yf
+    import pandas as pd
+    symbols = list(dict.fromkeys(symbols))
+    yf_syms = [s.replace("/", "-") for s in symbols]
+    out = []
+    try:
+        df = yf.download(yf_syms, period="5d", interval="1d", progress=False,
+                         auto_adjust=False, group_by="ticker", threads=True)
+    except Exception as e:
+        return [{"symbol": s, "price": None, "error": str(e)[:100]}
+                for s in symbols]
+    for sym, yfs in zip(symbols, yf_syms):
+        try:
+            if isinstance(df.columns, pd.MultiIndex):
+                sub = df[yfs]["Close"]
+                if isinstance(sub, pd.DataFrame):
+                    sub = sub.iloc[:, 0]
+            else:
+                sub = df["Close"]
+            closes = [float(c) for c in sub.dropna()]
+            if not closes:
+                out.append({"symbol": sym, "price": None})
+                continue
+            price = closes[-1]
+            prev = closes[-2] if len(closes) > 1 else closes[0]
+            chg = price - prev
+            out.append({"symbol": sym, "price": round(price, 2),
+                        "change": round(chg, 2),
+                        "change_pct": round(chg / prev * 100, 2) if prev else 0})
+        except Exception:
+            out.append({"symbol": sym, "price": None})
+    return out
+
+
+def market_payload(symbols, watchlist=None):
+    """One batched intraday call for the Stocks watchlist.
+
+    Returns [{symbol, price, change, change_pct, spark:[...], starred}],
+    starred symbols first.
+    """
+    import yfinance as yf
+    import pandas as pd
+    symbols = list(dict.fromkeys(symbols))
+    watchlist = watchlist or []
+    yf_syms = [s.replace("/", "-") for s in symbols]
+    out = []
+    try:
+        df = yf.download(yf_syms, period="1d", interval="5m", progress=False,
+                         auto_adjust=False, group_by="ticker", threads=True)
+    except Exception as e:
+        return [{"symbol": s, "price": None, "starred": s in watchlist,
+                 "error": str(e)[:100]} for s in symbols]
+    for sym, yfs in zip(symbols, yf_syms):
+        try:
+            if isinstance(df.columns, pd.MultiIndex):
+                sub = df[yfs]
+            else:
+                sub = df
+            closes_s = sub["Close"]
+            if isinstance(closes_s, pd.DataFrame):
+                closes_s = closes_s.iloc[:, 0]
+            opens_s = sub["Open"]
+            if isinstance(opens_s, pd.DataFrame):
+                opens_s = opens_s.iloc[:, 0]
+            closes = [float(c) for c in closes_s.dropna()]
+            if not closes:
+                out.append({"symbol": sym, "price": None,
+                            "starred": sym in watchlist})
+                continue
+            price = closes[-1]
+            try:
+                day_open = float(opens_s.dropna().iloc[0])
+            except Exception:
+                day_open = closes[0]
+            if not day_open or day_open != day_open:
+                day_open = closes[0]
+            chg = price - day_open
+            n = len(closes)
+            step = max(1, n // 30)
+            spark = [round(c, 2) for c in closes[::step]][-30:]
+            out.append({"symbol": sym, "price": round(price, 2),
+                        "change": round(chg, 2),
+                        "change_pct": round(chg / day_open * 100, 2),
+                        "spark": spark, "starred": sym in watchlist})
+        except Exception:
+            out.append({"symbol": sym, "price": None,
+                        "starred": sym in watchlist})
+    out.sort(key=lambda x: (0 if x.get("starred") else 1))
+    return out
+
+
+def chart_data(symbol, rng="1d"):
+    """Intraday bars for the Stocks tab chart. {symbol, price, change, change_pct, bars}."""
+    import yfinance as yf
+    import pandas as pd
+    yfs = symbol.replace("/", "-")
+    period, interval = ("1d", "5m") if rng == "1d" else ("5d", "15m")
+    try:
+        df = yf.download(yfs, period=period, interval=interval,
+                         progress=False, auto_adjust=False)
+    except Exception as e:
+        return {"error": f"chart data failed: {str(e)[:120]}"}
+    if df is None or len(df) == 0:
+        return {"error": f"no data for {symbol}"}
+    closes = _flat_close(df)
+    opens = df["Open"]
+    if isinstance(opens, pd.DataFrame):
+        opens = opens.iloc[:, 0]
+    bars = []
+    for ts, c in closes.items():
+        try:
+            cf = float(c)
+            if cf != cf:
+                continue
+            bars.append({"t": str(ts)[:16].replace("T", " "), "c": round(cf, 2)})
+        except Exception:
+            continue
+    if not bars:
+        return {"error": f"no data for {symbol}"}
+    price = bars[-1]["c"]
+    ref = bars[0]["c"]
+    try:
+        o0 = float(opens.dropna().iloc[0])
+        if o0 == o0 and o0 > 0:
+            ref = o0
+    except Exception:
+        pass
+    chg = price - ref
+    return {"symbol": symbol, "price": price,
+            "change": round(chg, 2),
+            "change_pct": round(chg / ref * 100, 2) if ref else 0,
+            "bars": bars}
+
+
+def broker_price_for(broker, symbol):
+    """Best-effort last price for a manual order; seeds the sim broker."""
+    px = None
+    try:
+        px = broker.last_price(symbol)
+    except Exception:
+        pass
+    if px:
+        return px
+    if isinstance(broker, PaperSimBroker):
+        try:
+            bars = bars_yfinance_batch([symbol], 5).get(symbol, [])
+            if bars:
+                broker.set_bars({symbol: bars})
+                return bars[-1]["c"]
+        except Exception:
+            pass
+    price, _prev = quote_yf(symbol)
+    if price and isinstance(broker, PaperSimBroker):
+        broker.set_bars({symbol: [{"c": price}]})
+    return price
 
 
 def check_daily_kill_switch(st, equity, risk):
