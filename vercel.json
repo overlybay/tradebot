@@ -1,0 +1,1 @@
+{"$schema":"https://openapi.vercel.sh/vercel.json","crons":[{"path":"/api/tick","schedule":"30 14 * * *"},{"path":"/api/tick","schedule":"30 18 * * *"}],"functions":{"api/tick.py":{"maxDuration":60}}}
